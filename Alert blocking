@@ -1,0 +1,178 @@
+USE [msdb]
+GO
+
+/****** Object:  Job [Alert blocking]    Script Date: 01-08-2019 12:06:20 ******/
+BEGIN TRANSACTION
+DECLARE @ReturnCode INT
+SELECT @ReturnCode = 0
+/****** Object:  JobCategory [[Uncategorized (Local)]]    Script Date: 01-08-2019 12:06:20 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'[Uncategorized (Local)]' AND category_class=1)
+BEGIN
+EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'[Uncategorized (Local)]'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'Alert blocking', 
+		@enabled=1, 
+		@notify_level_eventlog=0, 
+		@notify_level_email=0, 
+		@notify_level_netsend=0, 
+		@notify_level_page=0, 
+		@delete_level=0, 
+		@description=N'No description available.', 
+		@category_name=N'[Uncategorized (Local)]', 
+		@owner_login_name=N'superuser', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Alerts_Blocking]    Script Date: 01-08-2019 12:06:20 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Alerts_Blocking', 
+		@step_id=1, 
+		@cmdexec_success_code=0, 
+		@on_success_action=1, 
+		@on_success_step_id=0, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'EXEC DBA.DBO.Alerts_Blocking', 
+		@database_name=N'master', 
+		@flags=0
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'every 30 sec', 
+		@enabled=1, 
+		@freq_type=4, 
+		@freq_interval=1, 
+		@freq_subday_type=2, 
+		@freq_subday_interval=30, 
+		@freq_relative_interval=0, 
+		@freq_recurrence_factor=0, 
+		@active_start_date=20190703, 
+		@active_end_date=99991231, 
+		@active_start_time=0, 
+		@active_end_time=235959, 
+		@schedule_uid=N'15f77f06-b45e-4149-904b-351b46f16e4e'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+USE [DBA]
+GO
+
+/****** Object:  StoredProcedure [dbo].[Alerts_Blocking]    Script Date: 01-08-2019 12:07:23 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+
+--select * from msdb..sysmail_profile 
+
+CREATE procedure [dbo].[Alerts_Blocking] 
+
+as 
+
+DECLARE @tableHTML NVARCHAR(MAX) 
+
+if( 
+
+SELECT COUNT(1)FROM sys.dm_exec_requests blocked_query 
+
+JOIN sys.dm_exec_requests blocking_query ON blocked_query.blocking_session_id = blocking_query.session_id 
+
+CROSS APPLY 
+
+( 
+
+SELECT *FROM sys.dm_exec_sql_text(blocking_query.sql_handle) 
+
+) sql_text 
+
+JOIN sys.dm_os_waiting_tasks waits ON 
+
+waits.session_id = blocking_query.session_id where DATEDIFF(n,blocked_query.start_time,getdate())>2)>=1 
+
+begin 
+
+print 'CPU Alert Condition True, Sending Email..' 
+
+SET @tableHTML = 
+
+N'<H1 bgcolor="Yellow">Blocking Query Details</H1>' + 
+
+N'<H2 bgcolor="Yellow">Query Details</H2>' + 
+
+N'<table border="1">' + 
+
+N'<tr bgcolor="Yellow"><th>Database_Name</th><th>blocked_session_id</th><th>blocking_session_id</th><th>blocked_Query</th><th>blocking_Query</th><th>WaitType</th><th>Blocked_StartTime</th>'+ 
+
+CAST (( 
+
+SELECT 
+
+td=DB_NAME(blocked_query.database_id),'', 
+
+td=blocked_query.session_id,'', 
+
+td=blocking_query.session_id,'', 
+
+td=sql_text.text,'', 
+
+td=sql_text2.text,'', 
+
+td=waits.wait_type,'', 
+
+td=blocked_query.start_time,'' 
+
+FROM sys.dm_exec_requests blocked_query 
+
+JOIN sys.dm_exec_requests blocking_query ON 
+
+blocked_query.blocking_session_id = blocking_query.session_id 
+
+CROSS APPLY sys.dm_exec_sql_text(blocked_query.sql_handle) AS sql_text 
+
+CROSS APPLY sys.dm_exec_sql_text(blocking_query.sql_handle) AS sql_text2 
+
+JOIN sys.dm_os_waiting_tasks waits ON 
+
+waits.session_id = blocking_query.session_id where DATEDIFF(n,blocked_query.start_time,getdate())>2 
+
+FOR XML PATH('tr'), TYPE )AS NVARCHAR(MAX))+N'</table>' 
+
+-- Change SQL Server Email notification code here 
+
+EXEC msdb.dbo.sp_send_dbmail 
+
+@recipients = 'rahul.belokar@healthindiatpa.com',
+--@copy_recipients='sagar.thawai@healthindiatpa.com', 
+
+@profile_name = 'DBA_alert', 
+
+@subject = 'Alert for Blocking Queries on 192.168.50.11  Server', 
+
+@body = @tableHTML,@body_format = 'HTML'; 
+
+end
+
+
+
+GO
+
+
+
+
+

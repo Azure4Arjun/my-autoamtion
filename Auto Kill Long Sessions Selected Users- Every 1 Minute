@@ -1,0 +1,196 @@
+USE [msdb]
+GO
+
+/****** Object:  Job [Auto Kill Long Sessions Selected Users- Every 1 Minute]    Script Date: 01-08-2019 12:24:19 ******/
+BEGIN TRANSACTION
+DECLARE @ReturnCode INT
+SELECT @ReturnCode = 0
+/****** Object:  JobCategory [[Uncategorized (Local)]]    Script Date: 01-08-2019 12:24:19 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'[Uncategorized (Local)]' AND category_class=1)
+BEGIN
+EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'[Uncategorized (Local)]'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'Auto Kill Long Sessions Selected Users- Every 1 Minute', 
+		@enabled=1, 
+		@notify_level_eventlog=0, 
+		@notify_level_email=0, 
+		@notify_level_netsend=0, 
+		@notify_level_page=0, 
+		@delete_level=0, 
+		@description=N'Auto Kill Long Sessions Selected Users- Every 1 Minute', 
+		@category_name=N'[Uncategorized (Local)]', 
+		@owner_login_name=N'sa', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Kill Users]    Script Date: 01-08-2019 12:24:20 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Kill Users', 
+		@step_id=1, 
+		@cmdexec_success_code=0, 
+		@on_success_action=1, 
+		@on_success_step_id=0, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'exec USP_AutoKill_Long_User_Sessions_selectdusers', 
+		@database_name=N'Life', 
+		@flags=0
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'Kill users', 
+		@enabled=1, 
+		@freq_type=4, 
+		@freq_interval=1, 
+		@freq_subday_type=4, 
+		@freq_subday_interval=1, 
+		@freq_relative_interval=0, 
+		@freq_recurrence_factor=0, 
+		@active_start_date=20180328, 
+		@active_end_date=99991231, 
+		@active_start_time=0, 
+		@active_end_time=235959, 
+		@schedule_uid=N'45de88e0-e510-43cd-a2d4-9dc97af0b2d8'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+
+
+
+USE [Life]
+GO
+
+/****** Object:  StoredProcedure [dbo].[USP_AutoKill_Long_User_Sessions_selectdusers]    Script Date: 01-08-2019 12:23:44 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+-- =============================================
+
+-- Author:	 Sandeep Sharma
+
+-- Create date: 24-03-2018
+
+-- Description:	To Auto kill the long cpu usage session
+
+-- =============================================
+
+CREATE PROCEDURE [dbo].[USP_AutoKill_Long_User_Sessions_selectdusers]
+
+AS
+
+BEGIN
+
+	-- SET NOCOUNT ON added to prevent extra result sets from
+
+	-- interfering with SELECT statements.
+
+	SET NOCOUNT ON;
+
+
+
+ --declare @spid varchar(500)
+
+ --set @spid=(SELECT top 1 spid
+
+ --       FROM SYS.SYSPROCESSES
+
+ --       WHERE 
+
+	--		1 = CASE WHEN Status IN ( 'RUNNABLE', 'SUSPENDED' ) THEN 1
+
+	--		--Transactions that are open not yet committed or rolledback
+
+	--					WHEN Status = 'SLEEPING' AND open_tran  > 0 THEN 1 
+
+	--					ELSE 0 END
+
+	--		AND cmd NOT LIKE 'BACKUP%'	
+
+	--		and cpu > 400000  and
+
+	--		 hostname not in('ROHINI','HO_DMD_01','HO_PCS_07','HO_PCS_04','HO_PCS_02','HO_PCS_03','PREETI_K','MUGDHA_S','HO_PCS_10','LENOVO1-PC','HIPIMS_DLHI_12','HIPIMS_DLHI_15','HIPIMS_KOL_BM')
+
+	--		and program_name not like '%SQLAgent - TSQL%'
+
+	--		)
+
+	--			if(isnull(@spid,'')!='')
+
+	--		begin
+
+	--		insert into Long_SesionUser 
+
+	--		select hostname,cpu,GETDATE()
+
+	--		 FROM SYS.SYSPROCESSES
+
+ --       WHERE spid=@spid 
+
+	--	exec ('kill ' + @spid)
+
+	--	end
+
+
+
+		----------------------------------------------------------------------------
+
+		Declare @spid1 varchar(500)
+
+		set @spid1=(SELECT top 1 spid
+
+        FROM SYS.SYSPROCESSES
+
+        WHERE 
+
+			1 = CASE WHEN Status IN ( 'RUNNABLE', 'SUSPENDED' ) THEN 1
+
+			--Transactions that are open not yet committed or rolledback
+
+						WHEN Status = 'SLEEPING' AND open_tran  > 0 THEN 1 
+
+						ELSE 0 END
+
+			AND cmd NOT LIKE 'BACKUP%'	
+
+			and cpu > 400000  and hostname  in('ROHINI','HO_DMD_01','HO_PCS_07','HO_PCS_04','HO_PCS_02','HO_PCS_03','PREETI_K','MUGDHA_S','HO_PCS_10','HIPIMS_DLHI_12','HIPIMS_DLHI_15','HO_ITAPP_08','HO_ITAPP_03')
+
+			 and program_name not like '%SQLAgent - TSQL%'
+
+			)
+
+				if(isnull(@spid1,'')!='')
+
+			begin
+
+			insert into Long_SesionUser 
+
+			select hostname,cpu,GETDATE()
+
+			 FROM SYS.SYSPROCESSES
+
+        WHERE spid=@spid1 
+
+		exec ('kill ' + @spid1)
+
+		end
+
+END
+
+GO
+
+

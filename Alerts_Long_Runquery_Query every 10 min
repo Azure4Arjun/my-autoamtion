@@ -1,0 +1,250 @@
+USE [msdb]
+GO
+
+/****** Object:  Job [.Alerts_Long_Runquery_Query every 10 min]    Script Date: 01-08-2019 12:03:28 ******/
+BEGIN TRANSACTION
+DECLARE @ReturnCode INT
+SELECT @ReturnCode = 0
+/****** Object:  JobCategory [[Uncategorized (Local)]]    Script Date: 01-08-2019 12:03:28 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'[Uncategorized (Local)]' AND category_class=1)
+BEGIN
+EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'[Uncategorized (Local)]'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'.Alerts_Long_Runquery_Query every 10 min', 
+		@enabled=1, 
+		@notify_level_eventlog=0, 
+		@notify_level_email=0, 
+		@notify_level_netsend=0, 
+		@notify_level_page=0, 
+		@delete_level=0, 
+		@description=N'EXEC DBA.DBO.Alerts_Long_Runquery', 
+		@category_name=N'[Uncategorized (Local)]', 
+		@owner_login_name=N'superuser', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Long running]    Script Date: 01-08-2019 12:03:29 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Long running', 
+		@step_id=1, 
+		@cmdexec_success_code=0, 
+		@on_success_action=1, 
+		@on_success_step_id=0, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'EXEC DBA.DBO.Alerts_Long_Runquery', 
+		@database_name=N'master', 
+		@flags=0
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'every 10 min', 
+		@enabled=1, 
+		@freq_type=4, 
+		@freq_interval=1, 
+		@freq_subday_type=4, 
+		@freq_subday_interval=10, 
+		@freq_relative_interval=0, 
+		@freq_recurrence_factor=0, 
+		@active_start_date=20190703, 
+		@active_end_date=99991231, 
+		@active_start_time=0, 
+		@active_end_time=235959, 
+		@schedule_uid=N'fe8f92ef-a288-4f40-a2b9-979385eeaabd'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+
+USE [DBA]
+GO
+
+/****** Object:  StoredProcedure [dbo].[Alerts_Long_Runquery]    Script Date: 01-08-2019 12:05:11 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+
+
+CREATE procedure [dbo].[Alerts_Long_Runquery] 
+
+
+
+as 
+
+
+
+DECLARE @tableHTML NVARCHAR(MAX) 
+
+
+
+if( 
+
+
+
+SELECT count(req.session_id) 
+
+
+
+FROM sys.dm_exec_requests req 
+
+
+
+CROSS APPLY sys.dm_exec_sql_text(sql_handle) AS sqltext 
+
+
+
+where req.status in ('RUNNING','SUSPENDED','RUNNABLE') and req.command<>'BACKUP DATABASE' 
+
+
+
+AND ((DATEPART(Hour,getdate())-(DATEPART(HOUR,req.start_time))))>1)>=1 
+
+
+
+begin 
+
+
+
+print 'CPU Alert Condition True, Sending Email..' 
+
+
+
+SET @tableHTML = 
+
+
+
+N'<H1 bgcolor="green">Long Running Query</H1>' + 
+
+
+
+N'<H2 bgcolor="green">Query Details</H2>' + 
+
+
+
+N'<table border="1">' + 
+
+
+
+N'<tr bgcolor="green"><th>Query</th><th>Session_Id</th><th>Status</th><th>Command</th><th>Database</th><th>Start-Time</th>'+ 
+
+
+
+CAST (( 
+
+
+
+SELECT 
+
+
+
+td=sqltext.TEXT,'', 
+
+
+
+td=req.session_id,'', 
+
+
+
+td=req.status,'', 
+
+
+
+td=req.command,'', 
+
+
+
+td=Db_name(req.database_ID),'', 
+
+
+
+td=req.start_time,'' 
+
+
+
+FROM sys.dm_exec_requests req 
+
+
+
+CROSS APPLY sys.dm_exec_sql_text(sql_handle) AS sqltext 
+
+
+
+where ((DATEPART(Hour,getdate())-(DATEPART(HOUR,req.start_time))))>1 
+
+
+
+AND status in ('RUNNING','SUSPENDED','RUNNABLE') and req.command<>'BACKUP DATABASE' 
+
+
+
+FOR XML PATH('tr'), TYPE )AS NVARCHAR(MAX))+N'</table>' 
+
+
+
+-- Change SQL Server Email notification code here 
+
+
+
+EXEC msdb.dbo.sp_send_dbmail 
+
+
+
+@recipients = 'rahul.belokar@healthindiatpa.com;chirag.bhandari@healthindiatpa.com',
+
+@copy_recipients='sagar.thawai@healthindiatpa.com', 
+
+
+@profile_name = 'DBA_alert', 
+
+
+
+@subject = 'Long Running Query on 192.168.50.11 server', 
+
+
+
+@body = @tableHTML,@body_format = 'HTML'; 
+
+
+
+end 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+GO
+
+
+
+
+

@@ -1,0 +1,145 @@
+
+--That means that instead of doing something non-SARGable like this:
+
+SELECT Name, CreateDate
+FROM dbo.CoffeeInventory
+WHERE DAY(CreateDate)  = 19
+
+
+
+---We want to make it SARGable by doing this instead:
+SELECT Name, CreateDate
+FROM dbo.CoffeeInventory
+WHERE 
+  CreateDate  >= '2017-08-19 00:00:00' 
+  AND CreateDate < '2017-08-20 00:00:00'
+
+
+  --That means that instead of doing something non-SARGable like this:
+
+  SELECT Name
+FROM dbo.CoffeeInventory
+WHERE CONVERT(CHAR(10),CreateDate,121)  = '2017-08-19'
+
+---We want to make it SARGable by doing this instead:
+
+ --1
+  SELECT Name
+FROM dbo.CoffeeInventory
+WHERE CreateDate = CAST('2017-08-19' AS datetime2)
+
+--2
+SELECT Name
+FROM dbo.CoffeeInventory
+WHERE CreateDate = '2017-08-19'
+
+SET STATISTICS IO ON
+
+--Non-Sargable Query because of Function Used in Where Clause
+SELECT EmployeeName
+FROM  EmployeeTest
+WHERE LEFT( EmployeeName,1 ) = 'A';
+
+
+--1. Filtering the Result Based On the Employee Names Which Start with A
+--Sargable Query
+SELECT EmployeeName
+FROM  EmployeeTest
+WHERE EmployeeName LIKE 'A%';
+
+2.1.WHERE Field = INVERSE_FUNCTION('BLAH')
+2.2.WHERE Field LIKE '%blah%'
+
+
+
+SET STATISTICS IO OFF
+
+
+--2. Filtering Results for Specific a Year
+
+SET STATISTICS IO ON
+
+--Non-Sargable Query because of Function Used in Where Clause
+SELECT DateOfBirth
+FROM  EmployeeTest
+WHERE YEAR (DateOfBirth) = '1952';
+
+--2
+SELECT ModifiedDate FROM Dummy_PersonTable where YEAR(ModifiedDate)=2009
+
+
+--Sargable Query
+SELECT DateOfBirth
+FROM  EmployeeTest
+WHERE DateOfBirth >= '19520101' AND DateOfBirth < '19530101';
+
+SET STATISTICS IO OFF
+--2
+SELECT ModifiedDate FROM Dummy_PersonTable where ModifiedDate BETWEEN '20090101' AND '20091231'
+
+
+--3. Calculations on an Index Column in a Where Clause
+
+SET STATISTICS IO ON
+
+--Non-Sargable Query because of Calculation done on Index Column
+--in Where Clause
+
+SELECT Salary
+FROM  EmployeeTest
+WHERE Salary / 2 = 50147 ;
+
+--Sargable Query
+
+SELECT Salary
+FROM  EmployeeTest
+WHERE Salary  = (50147 * 2);
+
+SET STATISTICS IO OFF
+
+
+--4. Using the ISNULL Function in a Where Clause
+
+SET STATISTICS IO ON
+
+--Non-Sargable Query because of ISNULL function on Index Column
+--in Where Clause
+
+select EmployeeName
+FROM   EmployeeTest
+where  ISNULL (EmployeeName, 'Vru') = 'Vru' ;
+
+--Sargable Query
+
+select EmployeeName
+FROM   EmployeeTest
+where  EmployeeName = 'Vru' OR EmployeeName IS NULL;
+
+SET STATISTICS IO OFF
+
+--Non-Sargable:
+
+
+SELECT... WHERE isNull(FullName,'Jitendra') = 'Jitendra
+
+
+--Sargable:
+
+
+SELECT... WHERE ((FullName = 'Jitendra') OR (FullName IS NULL))
+
+
+---Non-Sargable:
+
+SELECT ... WHERE SUBSTRING(FullName,4) = 'Jite'
+
+--Sargable:
+
+SELECT... WHERE FullName LIKE 'Jite%'
+
+---Non-Sargable:
+
+SELECT DealerName FROM SargableDemo WHERE UPPER(DealerName) LIKE 'FORD'
+--Sargable:
+
+SELECT DealerName FROM SargableDemo WHERE DealerName LIKE 'FORD'

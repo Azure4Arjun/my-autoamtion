@@ -1,0 +1,699 @@
+USE [msdb]
+GO
+
+/****** Object:  Job [Maintenance - System Databases]    Script Date: 08/02/2019 13:12:32 ******/
+BEGIN TRANSACTION
+DECLARE @ReturnCode INT
+SELECT @ReturnCode = 0
+/****** Object:  JobCategory [Database Engine Tuning Advisor]    Script Date: 08/02/2019 13:12:32 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'Database Engine Tuning Advisor' AND category_class=1)
+BEGIN
+EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'Database Engine Tuning Advisor'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'Maintenance - System Databases', 
+		@enabled=0, 
+		@notify_level_eventlog=0, 
+		@notify_level_email=0, 
+		@notify_level_netsend=0, 
+		@notify_level_page=0, 
+		@delete_level=0, 
+		@description=N'Custom Maintenance Plan for System Databases', 
+		@category_name=N'Database Engine Tuning Advisor', 
+		@owner_login_name=N'sa', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [master - Cycle errorlog file (weekly)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'master - Cycle errorlog file (weekly)', 
+		@step_id=1, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=2, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* only once a week on sunday */
+IF DATEPART(dw, GETUTCDATE())=1
+	EXEC master.dbo.sp_cycle_errorlog', 
+		@database_name=N'master', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [master - Integrity Checks (monthly)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'master - Integrity Checks (monthly)', 
+		@step_id=2, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=3, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* on the 1st of each month, run integrity check against master database */
+IF (DAY(GETDATE())=1)
+	DBCC CHECKDB (''master'')', 
+		@database_name=N'master', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Integrity Checks (monthly)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Integrity Checks (monthly)', 
+		@step_id=3, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=4, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* on the 1st of each month, run integrity check against msdb database */
+IF (DAY(GETDATE())=1)
+	DBCC CHECKDB (''msdb'')', 
+		@database_name=N'master', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [model - Integrity Checks (monthly)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'model - Integrity Checks (monthly)', 
+		@step_id=4, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=5, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* on the 1st of each month, run integrity check against model database */
+IF (DAY(GETDATE())=1)
+	DBCC CHECKDB (''model'')', 
+		@database_name=N'master', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Backup History Retention (6 months)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Backup History Retention (6 months)', 
+		@step_id=5, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=6, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* keep only last 6 months of backup history */
+DECLARE   @oldestDate	[datetime]
+
+SET @oldestDate=DATEADD(month, -6, GETDATE())
+EXEC msdb.dbo.sp_delete_backuphistory @oldest_date = @oldestDate', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Job History Retention (12 months)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Job History Retention (12 months)', 
+		@step_id=6, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=7, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* keep only last 12 months of job execution history */
+DECLARE   @oldestDate	[datetime]
+
+SET @oldestDate=DATEADD(month, -12, GETDATE())
+EXEC msdb.dbo.sp_purge_jobhistory @oldest_date = @oldestDate', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Maintenance Plan History Retention (6 months)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Maintenance Plan History Retention (6 months)', 
+		@step_id=7, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=8, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* keep only last 6 months of maintenance plan history */
+DECLARE   @oldestDate	[datetime]
+
+SET @oldestDate=DATEADD(month, -6, GETDATE())
+EXECUTE msdb.dbo.sp_maintplan_delete_log null, null, @oldestDate
+DELETE FROM msdb.dbo.sysdbmaintplan_history WHERE end_time < @oldestDate  
+DELETE FROM msdb.dbo.sysmaintplan_logdetail WHERE end_time < @oldestDate', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Purge Old Mail Items (6months)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Purge Old Mail Items (6months)', 
+		@step_id=8, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=9, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* delete old mail items; especially, if you are sending attachements */
+/* keep only last 6 months of history */
+DECLARE   @oldestDate	[datetime]
+
+SET @oldestDate=DATEADD(month, -6, GETDATE())
+EXEC msdb.dbo.sysmail_delete_mailitems_sp @sent_before = @oldestDate', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Purge Old Mail Logs (6months)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Purge Old Mail Logs (6months)', 
+		@step_id=9, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=10, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* delete the log of the sent items */
+/* keep only last 6 months of history */
+
+DECLARE   @oldestDate	[datetime]
+
+SET @oldestDate=DATEADD(month, -6, GETDATE())
+EXEC msdb.dbo.sysmail_delete_log_sp @logged_before = @oldestDate', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Replication Alerts Retention (6 months)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Replication Alerts Retention (6 months)', 
+		@step_id=10, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=11, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=3, 
+		@retry_interval=1, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+/* keep only last 6 months of replication alerts history */
+BEGIN TRY
+	EXEC (''DELETE FROM msdb.dbo.sysreplicationalerts WHERE time <= DATEADD(month, -6, GETDATE())'')
+END TRY
+BEGIN CATCH
+	PRINT ERROR_MESSAGE()
+END CATCH', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [master - Index Maintenance (2 weeks)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'master - Index Maintenance (2 weeks)', 
+		@step_id=11, 
+		@cmdexec_success_code=0, 
+		@on_success_action=4, 
+		@on_success_step_id=12, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+-- ============================================================================
+-- Author			 : Andrei STEFAN (danandrei.stefan@gmail.com)
+-- Create date		 : 31.03.2012
+-- Module			 : 
+-- Description		 : index maintenance for SQL Server 2000/2005/2008/2008R2/2012
+--					   Rebuild database tables indexes for fragmentation greater or equal 30%
+--					   Defragmenting database tables indexes for fragmentation greater than 5% and lower than 30%
+--					   Create statistics for all tables in database
+--					   update statistics for all tables in database
+-------------------------------------------------------------------------------
+SET NOCOUNT ON
+
+DECLARE @SQLServerName	[varchar](255),
+		@DBName			[varchar](255),
+		@debugMode		[bit]
+
+--every 2 weeks on saturday
+IF DATEPART(dw, GETUTCDATE())=7 AND DATEPART(wk, GETUTCDATE())%2=0  AND DATEPART(dd, GETUTCDATE())>7
+	begin
+		SELECT	@SQLServerName = @@SERVERNAME,
+				@DBName		   = DB_NAME(),
+				@debugMode	   = 0	
+
+		------------------------------------------------------------------------------------------------------------------------------------------
+		DECLARE	@queryToRun    				[nvarchar](4000),
+				@serverToRun				[varchar](1024),
+				@TableName 					[varchar](255),
+				@ObjectID   				[int],
+				@IndexID   					[int],
+				@IndexName					[varchar](255),
+				@CurrentFragmentation		[numeric](10,2),
+				@DefragmentIndexThreshold   [numeric](10,2),
+				@RebuildIndexThreshold		[numeric](10,2),
+				@Error						[int],
+				@productVersion				[nvarchar](255),
+				@dbid						[int]
+
+		---------------------------------------------------------------------------------------------
+		RAISERROR(''--Start OPTIMIZE Database...'', 10, 1) WITH NOWAIT
+		-----------------------------------------------------------------------------------------------------------------------
+		SET @DefragmentIndexThreshold 	= 5.0
+		SET @RebuildIndexThreshold		= 30.0
+		SET @serverToRun=''['' + @SQLServerName + ''].['' + @DBName + ''].dbo.sp_executesql''
+
+		-----------------------------------------------------------------------------------------------------------------------
+		SELECT @productVersion=CAST(SERVERPROPERTY(''ProductVersion'') AS [nvarchar](255))
+		SELECT @productVersion=LEFT(@productVersion, CASE WHEN CHARINDEX(''.'', @productVersion)>0 THEN CHARINDEX(''.'', @productVersion)-1 ELSE 0 END)
+		SELECT @dbid = DB_ID(@DBName)
+
+		--------------------------------------------------------------------------------------------------
+		--Defragmenting database tables indexes
+		--------------------------------------------------------------------------------------------------
+		IF OBJECT_ID(''tempdb..#tmpResult'') IS NOT NULL DROP TABLE #tmpResult
+		CREATE TABLE #tmpResult (tmpResult [varchar](1024))
+
+		SET @queryToRun=''-- Analyzing tables fragmentation for Database ['' + @DBName + '']...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		IF OBJECT_ID(''tempdb..#FragmentationList'') IS NOT NULL DROP TABLE #FragmentationList
+		CREATE TABLE #FragmentationList 
+				(	ObjectName 		[varchar] (255),
+					ObjectId 		[int],
+					IndexName 		[varchar] (255),
+					IndexId 		[int],
+					Lvl 			[int],
+					CountPages 		[int],
+					CountRows 		[int],
+					MinRecSize 		[int],
+					MaxRecSize 		[int],
+					AvgRecSize 		[int],
+					ForRecCount 	[int],
+					Extents 		[int],
+					ExtentSwitches 	[int],
+					AvgFreeBytes 	[int],
+					AvgPageDensity 	[int],
+					ScanDensity 	[decimal],
+					BestCount 		[int],
+					ActualCount 	[int],
+					LogicalFrag 	[decimal],
+					ExtentFrag 		[decimal])
+
+		IF CAST(@productVersion AS [int]) < 9	/* SQL 2000 */
+			begin
+				SET @queryToRun=''SELECT DISTINCT [Table_Name] FROM ['' + @DBName + ''].INFORMATION_SCHEMA.TABLES WHERE [TABLE_TYPE]=''''BASE TABLE'''' AND [TABLE_SCHEMA]=''''dbo''''''
+				TRUNCATE TABLE #tmpResult
+
+				IF @debugMode=1 PRINT @queryToRun
+				INSERT INTO #tmpResult EXEC @serverToRun @queryToRun
+
+				DECLARE tmpTableList CURSOR FOR	SELECT * FROM #tmpResult	
+				OPEN tmpTableList
+				FETCH NEXT FROM tmpTableList INTO @TableName	
+				WHILE @@FETCH_STATUS = 0
+					begin
+						SET @queryToRun=''--		[dbo].['' + @TableName + '']''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+						SET @queryToRun=''DBCC SHOWCONTIG (''''['' + @TableName + '']'''') WITH FAST, TABLERESULTS, ALL_INDEXES, NO_INFOMSGS''
+
+						IF @debugMode=1 PRINT @queryToRun
+						INSERT	INTO #FragmentationList
+								EXEC @serverToRun @queryToRun
+
+						FETCH NEXT FROM tmpTableList INTO @TableName
+					end
+				CLOSE tmpTableList
+				DEALLOCATE tmpTableList
+			end
+		ELSE
+			begin
+				SET @queryToRun=N''SELECT	 OBJECT_NAME(a.[object_id])	AS [table_name]
+											, a.[object_id]
+											, b.[name] as index_name
+											, a.[index_id]
+											, a.[avg_fragmentation_in_percent]
+									FROM sys.dm_db_index_physical_stats ('' + CAST(@dbid AS [nvarchar]) + N'', NULL, NULL , NULL, ''''LIMITED'''') a
+									INNER JOIN sys.indexes b ON a.[object_id]=b.[object_id] AND a.[index_id]=b.[index_id]''
+		
+				IF @debugMode=1 PRINT @queryToRun
+				INSERT	INTO #FragmentationList([ObjectName], [ObjectId], [IndexName], [IndexId], [LogicalFrag])  
+						EXEC @serverToRun @queryToRun
+			end
+
+		----------------------------------------------------------------------------------
+		SET @queryToRun=''-- Defragmenting database tables indexes...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		DECLARE tmpIndexes CURSOR FOR 	SELECT	ObjectName, ObjectId, IndexId, IndexName, LogicalFrag
+										FROM	#FragmentationList
+										WHERE	LogicalFrag >= @DefragmentIndexThreshold 
+												AND INDEXPROPERTY (ObjectId, IndexName, ''IndexDepth'') > 0
+										ORDER BY ObjectName, IndexId
+		OPEN tmpIndexes
+		FETCH NEXT FROM tmpIndexes INTO @TableName, @ObjectID, @IndexID, @IndexName, @CurrentFragmentation
+		WHILE @@FETCH_STATUS = 0
+			begin
+				SET @queryToRun=''--		[dbo].['' + @TableName + ''].['' + @IndexName + ''] => Current fragmentation level: '' + RTRIM(CONVERT(varchar(15),@CurrentFragmentation))
+				RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+		
+				IF @CurrentFragmentation<@RebuildIndexThreshold
+					begin
+						SET @queryToRun=''--			DEFRAGMENT index...''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+				
+						IF CAST(@productVersion AS [int]) < 9	/* SQL 2000 */
+							SELECT @queryToRun = ''DBCC INDEXDEFRAG (0, '' + RTRIM(@ObjectID) + '', '' + RTRIM(@IndexID) + '') WITH NO_INFOMSGS''
+						ELSE
+							SELECT @queryToRun = ''ALTER INDEX ['' + RTRIM(@IndexName) + ''] ON ['' + RTRIM(@TableName) + ''] REORGANIZE''
+					end
+				ELSE
+					begin
+						SET @queryToRun=''--			REBUILD index...''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+						IF CAST(@productVersion AS [int]) < 9	/* SQL 2000 */
+							SELECT @queryToRun = ''DBCC DBREINDEX ('' + RTRIM(@TableName) + '', '' + RTRIM(@IndexName) + '') WITH NO_INFOMSGS''
+						ELSE
+							SELECT @queryToRun = ''ALTER INDEX ['' + RTRIM(@IndexName) + ''] ON ['' + RTRIM(@TableName) + ''] REBUILD''
+					end
+		
+				IF @debugMode=1 PRINT @queryToRun
+				EXEC @serverToRun @queryToRun
+				IF @@ERROR<>0
+					begin
+						SET @queryToRun=''--			ERROR: An error occured while defragmenting table ['' + @DBName + ''].dbo.['' + @TableName + '']''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+					end
+
+				FETCH NEXT FROM tmpIndexes INTO @TableName, @ObjectID, @IndexID, @IndexName, @CurrentFragmentation
+			end		
+		CLOSE tmpIndexes
+		DEALLOCATE tmpIndexes
+		DROP TABLE #FragmentationList
+
+
+		--------------------------------------------------------------------------------------------------
+		-- update statistics for all tables in database
+		--------------------------------------------------------------------------------------------------
+		SET @queryToRun=''-- Update statistics for all tables in database ['' + @DBName + '']...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		SET @queryToRun=''sp_updatestats'';
+
+		IF @debugMode=1 PRINT @queryToRun
+		EXEC @serverToRun @queryToRun
+
+
+		/*
+		--------------------------------------------------------------------------------------------------
+		-- Create statistics for all tables in database
+		--------------------------------------------------------------------------------------------------
+		SET @queryToRun=''-- Create statistics for all tables in database ['' + @DBName + '']...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		SET @queryToRun=''sp_createstats @fullscan=''''fullscan'''''';
+
+		IF @debugMode=1 PRINT @queryToRun
+		EXEC @serverToRun @queryToRun
+		*/
+
+		IF OBJECT_ID(''tempdb..#tmpResult'') IS NOT NULL DROP TABLE #tmpResult
+		IF OBJECT_ID(''tempdb..#FragmentationList'') IS NOT NULL DROP TABLE #FragmentationList
+	end', 
+		@database_name=N'master', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [msdb - Index Maintenance (2 weeks)]    Script Date: 08/02/2019 13:12:33 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'msdb - Index Maintenance (2 weeks)', 
+		@step_id=12, 
+		@cmdexec_success_code=0, 
+		@on_success_action=1, 
+		@on_success_step_id=0, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+-- ============================================================================
+-- Author			 : Andrei STEFAN (danandrei.stefan@gmail.com)
+-- Create date		 : 31.03.2012
+-- Module			 : 
+-- Description		 : index maintenance for SQL Server 2000/2005/2008/2008R2/2012
+--					   Rebuild database tables indexes for fragmentation greater or equal 30%
+--					   Defragmenting database tables indexes for fragmentation greater than 5% and lower than 30%
+--					   Create statistics for all tables in database
+--					   update statistics for all tables in database
+-------------------------------------------------------------------------------
+SET NOCOUNT ON
+
+DECLARE @SQLServerName	[varchar](255),
+		@DBName			[varchar](255),
+		@debugMode		[bit]
+
+--every 2 weeks on saturday
+IF DATEPART(dw, GETUTCDATE())=7 AND DATEPART(wk, GETUTCDATE())%2=0  AND DATEPART(dd, GETUTCDATE())>7
+	begin
+		SELECT	@SQLServerName = @@SERVERNAME,
+				@DBName		   = DB_NAME(),
+				@debugMode	   = 0	
+
+		------------------------------------------------------------------------------------------------------------------------------------------
+		DECLARE	@queryToRun    				[nvarchar](4000),
+				@serverToRun				[varchar](1024),
+				@TableName 					[varchar](255),
+				@ObjectID   				[int],
+				@IndexID   					[int],
+				@IndexName					[varchar](255),
+				@CurrentFragmentation		[numeric](10,2),
+				@DefragmentIndexThreshold   [numeric](10,2),
+				@RebuildIndexThreshold		[numeric](10,2),
+				@Error						[int],
+				@productVersion				[nvarchar](255),
+				@dbid						[int]
+
+		---------------------------------------------------------------------------------------------
+		RAISERROR(''--Start OPTIMIZE Database...'', 10, 1) WITH NOWAIT
+		-----------------------------------------------------------------------------------------------------------------------
+		SET @DefragmentIndexThreshold 	= 5.0
+		SET @RebuildIndexThreshold		= 30.0
+		SET @serverToRun=''['' + @SQLServerName + ''].['' + @DBName + ''].dbo.sp_executesql''
+
+		-----------------------------------------------------------------------------------------------------------------------
+		SELECT @productVersion=CAST(SERVERPROPERTY(''ProductVersion'') AS [nvarchar](255))
+		SELECT @productVersion=LEFT(@productVersion, CASE WHEN CHARINDEX(''.'', @productVersion)>0 THEN CHARINDEX(''.'', @productVersion)-1 ELSE 0 END)
+		SELECT @dbid = DB_ID(@DBName)
+
+		--------------------------------------------------------------------------------------------------
+		--Defragmenting database tables indexes
+		--------------------------------------------------------------------------------------------------
+		IF OBJECT_ID(''tempdb..#tmpResult'') IS NOT NULL DROP TABLE #tmpResult
+		CREATE TABLE #tmpResult (tmpResult [varchar](1024))
+
+		SET @queryToRun=''-- Analyzing tables fragmentation for Database ['' + @DBName + '']...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		IF OBJECT_ID(''tempdb..#FragmentationList'') IS NOT NULL DROP TABLE #FragmentationList
+		CREATE TABLE #FragmentationList 
+				(	ObjectName 		[varchar] (255),
+					ObjectId 		[int],
+					IndexName 		[varchar] (255),
+					IndexId 		[int],
+					Lvl 			[int],
+					CountPages 		[int],
+					CountRows 		[int],
+					MinRecSize 		[int],
+					MaxRecSize 		[int],
+					AvgRecSize 		[int],
+					ForRecCount 	[int],
+					Extents 		[int],
+					ExtentSwitches 	[int],
+					AvgFreeBytes 	[int],
+					AvgPageDensity 	[int],
+					ScanDensity 	[decimal],
+					BestCount 		[int],
+					ActualCount 	[int],
+					LogicalFrag 	[decimal],
+					ExtentFrag 		[decimal])
+
+		IF CAST(@productVersion AS [int]) < 9	/* SQL 2000 */
+			begin
+				SET @queryToRun=''SELECT DISTINCT [Table_Name] FROM ['' + @DBName + ''].INFORMATION_SCHEMA.TABLES WHERE [TABLE_TYPE]=''''BASE TABLE'''' AND [TABLE_SCHEMA]=''''dbo''''''
+				TRUNCATE TABLE #tmpResult
+
+				IF @debugMode=1 PRINT @queryToRun
+				INSERT INTO #tmpResult EXEC @serverToRun @queryToRun
+
+				DECLARE tmpTableList CURSOR FOR	SELECT * FROM #tmpResult	
+				OPEN tmpTableList
+				FETCH NEXT FROM tmpTableList INTO @TableName	
+				WHILE @@FETCH_STATUS = 0
+					begin
+						SET @queryToRun=''--		[dbo].['' + @TableName + '']''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+						SET @queryToRun=''DBCC SHOWCONTIG (''''['' + @TableName + '']'''') WITH FAST, TABLERESULTS, ALL_INDEXES, NO_INFOMSGS''
+
+						IF @debugMode=1 PRINT @queryToRun
+						INSERT	INTO #FragmentationList
+								EXEC @serverToRun @queryToRun
+
+						FETCH NEXT FROM tmpTableList INTO @TableName
+					end
+				CLOSE tmpTableList
+				DEALLOCATE tmpTableList
+			end
+		ELSE
+			begin
+				SET @queryToRun=N''SELECT	 OBJECT_NAME(a.[object_id])	AS [table_name]
+											, a.[object_id]
+											, b.[name] as index_name
+											, a.[index_id]
+											, a.[avg_fragmentation_in_percent]
+									FROM sys.dm_db_index_physical_stats ('' + CAST(@dbid AS [nvarchar]) + N'', NULL, NULL , NULL, ''''LIMITED'''') a
+									INNER JOIN sys.indexes b ON a.[object_id]=b.[object_id] AND a.[index_id]=b.[index_id]''
+		
+				IF @debugMode=1 PRINT @queryToRun
+				INSERT	INTO #FragmentationList([ObjectName], [ObjectId], [IndexName], [IndexId], [LogicalFrag])  
+						EXEC @serverToRun @queryToRun
+			end
+
+		----------------------------------------------------------------------------------
+		SET @queryToRun=''-- Defragmenting database tables indexes...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		DECLARE tmpIndexes CURSOR FOR 	SELECT	ObjectName, ObjectId, IndexId, IndexName, LogicalFrag
+										FROM	#FragmentationList
+										WHERE	LogicalFrag >= @DefragmentIndexThreshold 
+												AND INDEXPROPERTY (ObjectId, IndexName, ''IndexDepth'') > 0
+										ORDER BY ObjectName, IndexId
+		OPEN tmpIndexes
+		FETCH NEXT FROM tmpIndexes INTO @TableName, @ObjectID, @IndexID, @IndexName, @CurrentFragmentation
+		WHILE @@FETCH_STATUS = 0
+			begin
+				SET @queryToRun=''--		[dbo].['' + @TableName + ''].['' + @IndexName + ''] => Current fragmentation level: '' + RTRIM(CONVERT(varchar(15),@CurrentFragmentation))
+				RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+		
+				IF @CurrentFragmentation<@RebuildIndexThreshold
+					begin
+						SET @queryToRun=''--			DEFRAGMENT index...''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+				
+						IF CAST(@productVersion AS [int]) < 9	/* SQL 2000 */
+							SELECT @queryToRun = ''DBCC INDEXDEFRAG (0, '' + RTRIM(@ObjectID) + '', '' + RTRIM(@IndexID) + '') WITH NO_INFOMSGS''
+						ELSE
+							SELECT @queryToRun = ''ALTER INDEX ['' + RTRIM(@IndexName) + ''] ON ['' + RTRIM(@TableName) + ''] REORGANIZE''
+					end
+				ELSE
+					begin
+						SET @queryToRun=''--			REBUILD index...''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+						IF CAST(@productVersion AS [int]) < 9	/* SQL 2000 */
+							SELECT @queryToRun = ''DBCC DBREINDEX ('' + RTRIM(@TableName) + '', '' + RTRIM(@IndexName) + '') WITH NO_INFOMSGS''
+						ELSE
+							SELECT @queryToRun = ''ALTER INDEX ['' + RTRIM(@IndexName) + ''] ON ['' + RTRIM(@TableName) + ''] REBUILD''
+					end
+		
+				IF @debugMode=1 PRINT @queryToRun
+				EXEC @serverToRun @queryToRun
+				IF @@ERROR<>0
+					begin
+						SET @queryToRun=''--			ERROR: An error occured while defragmenting table ['' + @DBName + ''].dbo.['' + @TableName + '']''
+						RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+					end
+
+				FETCH NEXT FROM tmpIndexes INTO @TableName, @ObjectID, @IndexID, @IndexName, @CurrentFragmentation
+			end		
+		CLOSE tmpIndexes
+		DEALLOCATE tmpIndexes
+		DROP TABLE #FragmentationList
+
+
+		--------------------------------------------------------------------------------------------------
+		-- update statistics for all tables in database
+		--------------------------------------------------------------------------------------------------
+		SET @queryToRun=''-- Update statistics for all tables in database ['' + @DBName + '']...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		SET @queryToRun=''sp_updatestats'';
+
+		IF @debugMode=1 PRINT @queryToRun
+		EXEC @serverToRun @queryToRun
+
+
+		/*
+		--------------------------------------------------------------------------------------------------
+		-- Create statistics for all tables in database
+		--------------------------------------------------------------------------------------------------
+		SET @queryToRun=''-- Create statistics for all tables in database ['' + @DBName + '']...''
+		RAISERROR(@queryToRun, 10, 1) WITH NOWAIT
+
+		SET @queryToRun=''sp_createstats @fullscan=''''fullscan'''''';
+
+		IF @debugMode=1 PRINT @queryToRun
+		EXEC @serverToRun @queryToRun
+		*/
+
+		IF OBJECT_ID(''tempdb..#tmpResult'') IS NOT NULL DROP TABLE #tmpResult
+		IF OBJECT_ID(''tempdb..#FragmentationList'') IS NOT NULL DROP TABLE #FragmentationList
+	end', 
+		@database_name=N'msdb', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-$(dbName) - Maintenance - System Databases.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'Daily', 
+		@enabled=1, 
+		@freq_type=4, 
+		@freq_interval=1, 
+		@freq_subday_type=1, 
+		@freq_subday_interval=0, 
+		@freq_relative_interval=0, 
+		@freq_recurrence_factor=0, 
+		@active_start_date=20141215, 
+		@active_end_date=99991231, 
+		@active_start_time=0, 
+		@active_end_time=235959, 
+		@schedule_uid=N'd5745f04-d11c-40f2-ba48-191c9f07465b'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+

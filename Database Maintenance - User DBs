@@ -1,0 +1,629 @@
+USE [msdb]
+GO
+
+/****** Object:  Job [life - Database Maintenance - User DBs]    Script Date: 08/02/2019 13:15:32 ******/
+BEGIN TRANSACTION
+DECLARE @ReturnCode INT
+SELECT @ReturnCode = 0
+/****** Object:  JobCategory [Database Maintenance]    Script Date: 08/02/2019 13:15:32 ******/
+IF NOT EXISTS (SELECT name FROM msdb.dbo.syscategories WHERE name=N'Database Maintenance' AND category_class=1)
+BEGIN
+EXEC @ReturnCode = msdb.dbo.sp_add_category @class=N'JOB', @type=N'LOCAL', @name=N'Database Maintenance'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+
+END
+
+DECLARE @jobId BINARY(16)
+EXEC @ReturnCode =  msdb.dbo.sp_add_job @job_name=N'life - Database Maintenance - User DBs', 
+		@enabled=0, 
+		@notify_level_eventlog=0, 
+		@notify_level_email=0, 
+		@notify_level_netsend=0, 
+		@notify_level_page=0, 
+		@delete_level=0, 
+		@description=N'Custom Maintenance Plan for User Databases', 
+		@category_name=N'Database Maintenance', 
+		@owner_login_name=N'sa', @job_id = @jobId OUTPUT
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Daily: Kill Orphan Connections]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Daily: Kill Orphan Connections', 
+		@step_id=1, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=2, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'EXEC [dbo].[usp_mpDatabaseKillConnections]	@SQLServerName		= @@SERVERNAME,
+						@DBName		= DEFAULT,
+						@flgOptions		= DEFAULT,
+						@DebugMode		= DEFAULT', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=4
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Weekly: Database Consistency Check]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Weekly: Database Consistency Check', 
+		@step_id=2, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=12, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+/* only once a week on Saturday */
+IF DATEPART(dw, GETUTCDATE())=7
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END IN (''ONLINE'', ''READ ONLY'')
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseConsistencyCheck]	@sqlServerName			= @@SERVERNAME,
+															@dbName					= @databaseName,
+															@tableSchema			= ''%'',
+															@tableName				= ''%'',
+															@flgActions				= 1,
+															@flgOptions				= DEFAULT,
+															@debugMode				= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Daily: Allocation Consistency Check]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Daily: Allocation Consistency Check', 
+		@step_id=3, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=12, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+							, @flgActions	[int]
+	
+	/* when running DBCC CHECKDB, skip running DBCC CHECKALLOC*/
+	IF DATEPART(dw, GETUTCDATE())=7
+		SET @flgActions = 8
+	ELSE
+		SET @flgActions = 12
+
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END IN (''ONLINE'', ''READ ONLY'')
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseConsistencyCheck]	@sqlServerName			= @@SERVERNAME,
+															@dbName					= @databaseName,
+															@tableSchema			= ''%'',
+															@tableName				= ''%'',
+															@flgActions				= @flgActions,
+															@flgOptions				= DEFAULT,
+															@debugMode				= DEFAULT
+
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Weekly: Tables Consistency Check]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Weekly: Tables Consistency Check', 
+		@step_id=4, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=12, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+/* only once a week on Sunday */
+IF DATEPART(dw, GETUTCDATE())=1
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END IN (''ONLINE'', ''READ ONLY'')
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseConsistencyCheck]	@sqlServerName			= @@SERVERNAME,
+															@dbName					= @databaseName,
+															@tableSchema			= ''%'',
+															@tableName				= ''%'',
+															@flgActions				= 34,
+															@flgOptions				= DEFAULT,
+															@debugMode				= DEFAULT
+
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Weekly: Reference Consistency Check]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Weekly: Reference Consistency Check', 
+		@step_id=5, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=12, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+/* only once a week on Sunday */
+IF DATEPART(dw, GETUTCDATE())=1
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END IN (''ONLINE'', ''READ ONLY'')
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseConsistencyCheck]	@sqlServerName			= @@SERVERNAME,
+															@dbName					= @databaseName,
+															@tableSchema			= ''%'',
+															@tableName				= ''%'',
+															@flgActions				= 16,
+															@flgOptions				= DEFAULT,
+															@debugMode				= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Weekly: Perform Correction to Space Usage]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Weekly: Perform Correction to Space Usage', 
+		@step_id=6, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=7, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+/* only once a week on Monday */
+IF DATEPART(dw, GETUTCDATE())=2
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END = ''ONLINE''	
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseConsistencyCheck]	@sqlServerName			= @@SERVERNAME,
+															@dbName					= @databaseName,
+															@tableSchema			= ''%'',
+															@tableName				= ''%'',
+															@flgActions				= 64,
+															@flgOptions				= DEFAULT,
+															@debugMode				= DEFAULT
+
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Daily: Rebuild Heap Tables]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Daily: Rebuild Heap Tables', 
+		@step_id=7, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=8, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END = ''ONLINE''
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseOptimize]			@SQLServerName			= @@SERVERNAME,
+															@DBName					= @databaseName,
+															@TableSchema			= ''%'',
+															@TableName				= ''%'',
+															@flgActions				= 16,
+															@flgOptions				= DEFAULT,
+															@DefragIndexThreshold	= DEFAULT,
+															@RebuildIndexThreshold	= DEFAULT,
+															@DebugMode				= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Daily: Rebuild or Reorganize Indexes]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Daily: Rebuild or Reorganize Indexes', 
+		@step_id=8, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=9, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')	
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END = ''ONLINE''
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseOptimize]			@SQLServerName			= @@SERVERNAME,
+															@DBName					= @databaseName,
+															@TableSchema			= ''%'',
+															@TableName				= ''%'',
+															@flgActions				= 3,
+															@flgOptions				= DEFAULT,
+															@DefragIndexThreshold	= DEFAULT,
+															@RebuildIndexThreshold	= DEFAULT,
+															@DebugMode				= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Daily: Update Statistics]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Daily: Update Statistics', 
+		@step_id=9, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=10, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END = ''ONLINE''
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseOptimize]			@SQLServerName			= @@SERVERNAME,
+															@DBName					= @databaseName,
+															@TableSchema			= ''%'',
+															@TableName				= ''%'',
+															@flgActions				= 8,
+															@flgOptions				= DEFAULT,
+															@StatsSamplePercent		= DEFAULT,
+															@StatsAgeDays			= DEFAULT,
+															@StatsChangePercent		= DEFAULT,
+															@DebugMode				= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Weekly: Shrink Database (TRUNCATEONLY)]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Weekly: Shrink Database (TRUNCATEONLY)', 
+		@step_id=10, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=11, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+/* only once a week on Monday */
+IF DATEPART(dw, GETUTCDATE())= 2
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END = ''ONLINE''
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseShrink]	@SQLServerName		= @@SERVERNAME,
+													@DBName				= @databaseName,
+													@flgActions			= 2,	
+													@flgOptions			= 1,
+													@executionLevel		= DEFAULT,
+													@DebugMode			= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Monthly: Shrink Log File]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Monthly: Shrink Log File', 
+		@step_id=11, 
+		@cmdexec_success_code=0, 
+		@on_success_action=3, 
+		@on_success_step_id=0, 
+		@on_fail_action=4, 
+		@on_fail_step_id=12, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'DECLARE @databaseName [sysname]
+/* on the first Saturday of the month */
+IF DATEPART(dw, GETUTCDATE())=7 AND DATEPART(dd, GETUTCDATE())<=7
+	begin
+		DECLARE crsDatabases CURSOR LOCAL FAST_FORWARD FOR	SELECT [name] 
+									FROM master.dbo.sysdatabases
+									WHERE [name] NOT IN (''master'', ''model'', ''msdb'', ''tempdb'')
+											AND [status] <> 0
+											AND CASE WHEN [status] & 32 = 32 THEN ''LOADING''
+													 WHEN [status] & 64 = 64 THEN ''PRE RECOVERY''
+													 WHEN [status] & 128 = 128 THEN ''RECOVERING''
+													 WHEN [status] & 256 = 256 THEN ''NOT RECOVERED''
+													 WHEN [status] & 512 = 512 THEN ''OFFLINE''
+													 WHEN [status] & 2097152 = 2097152 THEN ''STANDBY''
+													 WHEN [status] & 1024 = 1024 THEN ''READ ONLY''
+													 WHEN [status] & 2048 = 2048 THEN ''DBO USE ONLY''
+													 WHEN [status] & 4096 = 4096 THEN ''SINGLE USER''
+													 WHEN [status] & 32768 = 32768 THEN ''EMERGENCY MODE''
+													 WHEN [status] & 4194584 = 4194584 THEN ''SUSPECT''
+													 ELSE ''ONLINE''
+												END = ''ONLINE''
+		OPEN crsDatabases
+		FETCH NEXT FROM crsDatabases INTO @databaseName
+		WHILE @@FETCH_STATUS=0
+			begin
+				EXEC [dbo].[usp_mpDatabaseShrink]	@SQLServerName		= @@SERVERNAME,
+													@DBName				= @databaseName,
+													@flgActions			= 1,	
+													@flgOptions			= 0,
+													@executionLevel		= DEFAULT,
+													@DebugMode			= DEFAULT
+				
+				FETCH NEXT FROM crsDatabases INTO @databaseName
+			end
+		CLOSE crsDatabases
+		DEALLOCATE crsDatabases
+	end
+	', 
+		@database_name=N'life', 
+		@output_file_name=N'C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log', 
+		@flags=6
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+/****** Object:  Step [Send email]    Script Date: 08/02/2019 13:15:32 ******/
+EXEC @ReturnCode = msdb.dbo.sp_add_jobstep @job_id=@jobId, @step_name=N'Send email', 
+		@step_id=12, 
+		@cmdexec_success_code=0, 
+		@on_success_action=1, 
+		@on_success_step_id=0, 
+		@on_fail_action=2, 
+		@on_fail_step_id=0, 
+		@retry_attempts=0, 
+		@retry_interval=0, 
+		@os_run_priority=0, @subsystem=N'TSQL', 
+		@command=N'
+EXEC [dbo].[usp_sqlAgentJobEmailStatusReport]	@jobName		=''life - Database Maintenance - User DBs'',
+												@logFileLocation=''C:\Program Files\Microsoft SQL Server\MSSQL10_50.UAT_HIPIMS\MSSQL\Log\job-life - Database Maintenance - User DBs.log'',
+												@module			=''maintenance-plan'',
+												@sendLogAsAttachment = 1,
+												@eventType		= 2', 
+		@database_name=N'life', 
+		@flags=0
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_update_job @job_id = @jobId, @start_step_id = 1
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobschedule @job_id=@jobId, @name=N'Daily', 
+		@enabled=1, 
+		@freq_type=4, 
+		@freq_interval=1, 
+		@freq_subday_type=1, 
+		@freq_subday_interval=0, 
+		@freq_relative_interval=0, 
+		@freq_recurrence_factor=0, 
+		@active_start_date=20141215, 
+		@active_end_date=99991231, 
+		@active_start_time=20000, 
+		@active_end_time=235959, 
+		@schedule_uid=N'54fc640f-ca59-40ec-b015-19530ad21c99'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+EXEC @ReturnCode = msdb.dbo.sp_add_jobserver @job_id = @jobId, @server_name = N'(local)'
+IF (@@ERROR <> 0 OR @ReturnCode <> 0) GOTO QuitWithRollback
+COMMIT TRANSACTION
+GOTO EndSave
+QuitWithRollback:
+    IF (@@TRANCOUNT > 0) ROLLBACK TRANSACTION
+EndSave:
+
+GO
+
+
